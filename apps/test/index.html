@@ -1,0 +1,126 @@
+<!--
+  Copyright (c) 2025 naruya
+  Licensed under the MIT License.
+-->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>GVRM SubScene Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-size: 14px;
+      margin: 0px;
+      display: flex;
+      overflow: hidden;
+      color: white;
+      background-color: black;
+    }
+
+    #threejs-container {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: -1;
+    }
+
+    #info {
+      font-size: 12px;
+      top: 4px;
+      left: 8px;
+      position: absolute;
+      color: white !important;
+      max-width: 400px;
+    }
+
+    #infoR {
+      font-size: 12px;
+      top: 4px;
+      right: 8px;
+      position: absolute;
+      color: white !important;
+    }
+
+    .button-container {
+      display: flex;
+      gap: 10px;
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      z-index: 9999;
+    }
+
+    .control-button {
+      padding: 10px 20px;
+      background-color: rgba(0, 0, 0, 0.2);
+      color: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .control-button:hover {
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    #status {
+      position: fixed;
+      bottom: 80px;
+      left: 20px;
+      font-size: 12px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 5px;
+      max-width: 500px;
+    }
+
+    #status pre {
+      margin: 0;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="info">
+    <b>SubScene Test</b><br>
+    Left (red axes): GVRM in main scene<br>
+    Right (green axes): GVRM in subscene at (3, 0, 0)<br><br>
+    Press [Space] to toggle animation<br>
+    Press [D] to log debug info
+  </div>
+
+  <div id="infoR">
+    Loading: <span id="loaddisplay">0%</span>
+  </div>
+
+  <div class="button-container">
+    <button class="control-button" id="move-subscene">Move SubScene</button>
+    <button class="control-button" id="rotate-subscene">Rotate SubScene</button>
+  </div>
+
+  <div id="status">
+    <pre id="status-text">Loading...</pre>
+  </div>
+
+  <div id="threejs-container"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
+      "gaussian-splats-3d": "../../lib/gaussian-splats-3d.module.js",
+      "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm"
+    }
+  }
+  </script>
+
+  <script type="module" src="main.js"></script>
+</body>
+
+</html>

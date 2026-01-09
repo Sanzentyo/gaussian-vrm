@@ -191,6 +191,11 @@ export class GVRM extends THREE.Group {
     const rootNode = character.currentVrm.scene.children[0].children[0];
     _traverseNodes(rootNode, 1);
 
+    // Store initial world position/quaternion for subscene support
+    gvrm.vrmWorldPosition0 = new THREE.Vector3();
+    gvrm.vrmWorldQuaternion0 = new THREE.Quaternion();
+    character.currentVrm.scene.getWorldPosition(gvrm.vrmWorldPosition0);
+    character.currentVrm.scene.getWorldQuaternion(gvrm.vrmWorldQuaternion0);
 
     gvrm.isReady = true
 
@@ -282,6 +287,8 @@ export class GVRM extends THREE.Group {
     this.boneSceneMap = _gvrm.boneSceneMap;
     this.vertexSceneMap = _gvrm.vertexSceneMap;
     this.fileName = _gvrm.fileName;
+    this.vrmWorldPosition0 = _gvrm.vrmWorldPosition0;
+    this.vrmWorldQuaternion0 = _gvrm.vrmWorldQuaternion0;
     this.isReady = true;
   }
 
@@ -310,11 +317,20 @@ export class GVRM extends THREE.Group {
     const tempMidPoint = new THREE.Vector3();
     const tempMat = new THREE.Matrix4();
     const tempQuat = new THREE.Quaternion();
+    const gsViewerMatrixWorldInverse = new THREE.Matrix4();
+    const gsViewerWorldQuat = new THREE.Quaternion();
+    const gsViewerWorldQuatInverse = new THREE.Quaternion();
     const noSortBoneList = [
       "J_Bip_C_Neck", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest", "J_Bip_C_HeadTop_End", "J_Bip_C_Head"
     ];
 
     const skeleton = this.character.currentVrm.scene.children[2].skeleton;
+
+    // Get GS viewer's world transform for coordinate conversion
+    this.gs.viewer.updateMatrixWorld();
+    gsViewerMatrixWorldInverse.copy(this.gs.viewer.matrixWorld).invert();
+    this.gs.viewer.getWorldQuaternion(gsViewerWorldQuat);
+    gsViewerWorldQuatInverse.copy(gsViewerWorldQuat).invert();
 
     skeleton.bones.forEach((bone) => {
       const children = bone.children;
@@ -330,12 +346,14 @@ export class GVRM extends THREE.Group {
         tempNodePos.setFromMatrixPosition(bone.matrixWorld);
         tempChildPos.setFromMatrixPosition(childBone.matrixWorld);
         tempMidPoint.addVectors(tempNodePos, tempChildPos).multiplyScalar(0.5);
-        tempMidPoint.sub(this.character.currentVrm.scene.position).add(this.character.currentVrm.scene.position0);
-        tempMidPoint.applyQuaternion(this.gs.viewer.quaternion.clone().invert());
 
+        // Convert world coords directly to GS viewer's local coords
+        tempMidPoint.applyMatrix4(gsViewerMatrixWorldInverse);
+
+        // Rotation: bone's rotation change in GS viewer's local coords
         tempMat.extractRotation(childBone.matrixWorld.multiply(childBone.matrixWorld0.clone().invert()));
         tempQuat.setFromRotationMatrix(tempMat);
-        tempQuat.premultiply(this.gs.viewer.quaternion.clone().invert());
+        tempQuat.premultiply(gsViewerWorldQuatInverse);
         tempQuat.multiply(this.gs.quaternion0);
 
         const scene = this.gs.viewer.getSplatScene(sceneIndex);
@@ -369,6 +387,7 @@ export class GVRM extends THREE.Group {
 
   update() {
     if (!this.isReady) return;
+    // Use local position/quaternion (relative to parent scene)
     let tempQuat = this.character.currentVrm.scene.quaternion.clone();
     let tempQuat0 = this.character.currentVrm.scene.quaternion0.clone();
     let tempPos = this.character.currentVrm.scene.position.clone();
