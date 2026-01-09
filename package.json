@@ -1,0 +1,51 @@
+{
+  "name": "@naruya/gaussian-vrm",
+  "version": "1.0.2",
+  "description": "3D Gaussian Splatting with VRM character animation",
+  "main": "lib/gaussian-vrm.bundled.js",
+  "module": "lib/gaussian-vrm.bundled.js",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./lib/gaussian-vrm.bundled.js"
+    }
+  },
+  "files": [
+    "lib/gaussian-vrm.bundled.js"
+  ],
+  "peerDependencies": {
+    "three": "^0.170.0",
+    "@pixiv/three-vrm": ">=2.1.0",
+    "jszip": "^3.10.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/naruya/gaussian-vrm"
+  },
+  "homepage": "https://github.com/naruya/gaussian-vrm#readme",
+  "bugs": {
+    "url": "https://github.com/naruya/gaussian-vrm/issues"
+  },
+  "keywords": [
+    "gaussian-splatting",
+    "3dgs",
+    "vrm",
+    "vtuber",
+    "avatar",
+    "three.js",
+    "threejs",
+    "3d",
+    "animation"
+  ],
+  "author": "naruya",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
