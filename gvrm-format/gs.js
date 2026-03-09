@@ -6,6 +6,8 @@ import * as THREE from 'three';
 import { PackedSplats, SparkRenderer, SplatMesh, SplatSkinning } from '@sparkjsdev/spark';
 
 
+const LEGACY_SPHERICAL_HARMONICS_DEGREE = 2;
+
 const tempCenter = new THREE.Vector3();
 const tempScales = new THREE.Vector3();
 const tempColor = new THREE.Color();
@@ -28,10 +30,30 @@ function ensureSparkRenderer(scene, renderer) {
     });
     sparkRenderer.name = 'SparkRenderer';
     sparkRenderer.frustumCulled = false;
+    sparkRenderer.userData.defaultRenderSettings = {
+      maxStdDev: sparkRenderer.maxStdDev,
+      minPixelRadius: sparkRenderer.minPixelRadius,
+      falloff: sparkRenderer.falloff,
+    };
     scene.add(sparkRenderer);
     scene.userData.sparkRenderer = sparkRenderer;
   }
   return scene.userData.sparkRenderer;
+}
+
+
+function normalizeUrls(urls) {
+  if (!Array.isArray(urls)) {
+    return urls ? [urls] : [];
+  }
+  return urls.filter(Boolean);
+}
+
+
+async function loadPackedSplats(url) {
+  const packedSplats = new PackedSplats({ url });
+  await packedSplats.initialized;
+  return packedSplats;
 }
 
 
@@ -61,60 +83,36 @@ export function createLoadingSpinner() {
 }
 
 
-async function loadPackedSplats(urls) {
-  if (!Array.isArray(urls)) {
-    urls = [urls];
-  }
-
-  const filteredUrls = urls.filter(Boolean);
-  if (filteredUrls.length === 0) {
-    throw new Error('No Gaussian splat URLs were provided.');
-  }
-
-  if (filteredUrls.length === 1) {
-    const packedSplats = new PackedSplats({ url: filteredUrls[0] });
-    await packedSplats.initialized;
-    return packedSplats;
-  }
-
-  const mergedSplats = new PackedSplats();
-  for (const url of filteredUrls) {
-    const packedSplats = new PackedSplats({ url });
-    await packedSplats.initialized;
-    packedSplats.forEachSplat((_index, center, scales, quaternion, opacity, color) => {
-      mergedSplats.pushSplat(center, scales, quaternion, opacity, color);
-    });
-  }
-  mergedSplats.needsUpdate = true;
-  return mergedSplats;
-}
-
-
 class SparkViewer extends THREE.Group {
   constructor(scene, renderer) {
     super();
     this.loadingSpinner = createLoadingSpinner();
     this.sparkRenderer = ensureSparkRenderer(scene, renderer);
     this.sparkScene = new THREE.Group();
-    this.sparkScene.name = 'SparkSplatScene';
+    this.sparkScene.name = 'SparkSplatRoot';
+    this.sparkScenes = [];
+    this.sparkMeshes = [];
     this.add(this.sparkScene);
   }
 
   getSplatScene(index) {
-    return index === 0 ? this.sparkScene : undefined;
+    return this.sparkScenes[index];
   }
 
   async dispose() {
     const gsGroup = this.parent;
 
-    if (this.sparkMesh) {
-      if (this.sparkMesh.parent) {
-        this.sparkMesh.parent.remove(this.sparkMesh);
+    for (const sparkMesh of this.sparkMeshes) {
+      if (sparkMesh.parent) {
+        sparkMesh.parent.remove(sparkMesh);
       }
-      this.sparkMesh.dispose();
-      this.sparkMesh = null;
-      this.splatMesh = null;
+      sparkMesh.dispose();
     }
+
+    this.sparkScenes = [];
+    this.sparkMeshes = [];
+    this.sparkMesh = null;
+    this.splatMesh = null;
 
     if (this.parent) {
       this.parent.remove(this);
@@ -130,83 +128,173 @@ export class GaussianSplatting extends THREE.Group {
   constructor(urls, scale, gsPosition, quaternion, scene, renderer) {
     super();
     this.sparkRenderer = ensureSparkRenderer(scene, renderer);
+    this.sceneEntries = [];
+    this.sceneRanges = [];
+    this.sparkMeshes = [];
     this.splatCount = 0;
     this.sourcePosition = new THREE.Vector3();
     this.sourceQuaternion = new THREE.Quaternion();
+    this.sourceScale = scale;
     this.loadGS(urls, scale, gsPosition, quaternion, scene, renderer);
   }
 
+  createCompatSplatMesh() {
+    const combinedSplatMesh = {
+      scenes: this.sceneEntries.map((entry) => entry.sceneTransform),
+      geometry: {
+        attributes: {
+          splatIndex: {
+            array: new Uint32Array(this.splatCount),
+          },
+        },
+      },
+      pointCloudModeEnabled: false,
+      updateDataTexturesFromBaseData: (startIndex = 0, endIndex = this.splatCount - 1) => {
+        this.syncRange(startIndex, endIndex);
+      },
+      setPointCloudModeEnabled: (enabled) => {
+        combinedSplatMesh.pointCloudModeEnabled = enabled;
+        this.applyPointCloudMode(enabled);
+      },
+    };
+
+    Object.defineProperty(combinedSplatMesh, 'renderOrder', {
+      get: () => this.sceneEntries[0]?.sparkMesh.renderOrder ?? 0,
+      set: (value) => {
+        for (const entry of this.sceneEntries) {
+          entry.sparkMesh.renderOrder = value;
+        }
+      },
+    });
+
+    return combinedSplatMesh;
+  }
+
+  applyPointCloudMode(enabled) {
+    const defaultRenderSettings = this.sparkRenderer.userData.defaultRenderSettings;
+    this.sparkRenderer.maxStdDev = enabled ? 0.35 : defaultRenderSettings.maxStdDev;
+    this.sparkRenderer.falloff = enabled ? 0.0 : defaultRenderSettings.falloff;
+    this.sparkRenderer.minPixelRadius = enabled ? 0.0 : defaultRenderSettings.minPixelRadius;
+
+    for (const entry of this.sceneEntries) {
+      entry.sparkMesh.pointCloudModeEnabled = enabled;
+    }
+
+    if (this.splatMesh) {
+      this.splatMesh.pointCloudModeEnabled = enabled;
+    }
+  }
+
   rebuildBaseDataCaches() {
-    this.splatCount = this.sparkMesh.packedSplats.numSplats;
+    this.splatCount = this.sceneEntries.reduce(
+      (count, entry) => count + entry.sparkMesh.packedSplats.numSplats,
+      0,
+    );
+
     this.centers = new Float32Array(this.splatCount * 3);
     this.colors = new Float32Array(this.splatCount * 4);
     this.scales = new Float32Array(this.splatCount * 3);
     this.quaternions = new Float32Array(this.splatCount * 4);
     this.covariances = new Float32Array(this.splatCount * 6);
+    this.sceneRanges = [];
 
-    this.sparkMesh.forEachSplat((index, center, scales, quaternion, opacity, color) => {
-      this.centers[index * 3 + 0] = center.x;
-      this.centers[index * 3 + 1] = center.y;
-      this.centers[index * 3 + 2] = center.z;
+    let globalIndex = 0;
+    for (const entry of this.sceneEntries) {
+      const startIndex = globalIndex;
+      const count = entry.sparkMesh.packedSplats.numSplats;
+      entry.startIndex = startIndex;
+      entry.endIndex = startIndex + count - 1;
+      this.sceneRanges.push({ startIndex, endIndex: entry.endIndex, entry });
 
-      this.scales[index * 3 + 0] = scales.x;
-      this.scales[index * 3 + 1] = scales.y;
-      this.scales[index * 3 + 2] = scales.z;
+      entry.sparkMesh.forEachSplat((localIndex, center, scales, quaternion, opacity, color) => {
+        const index = startIndex + localIndex;
 
-      this.quaternions[index * 4 + 0] = quaternion.x;
-      this.quaternions[index * 4 + 1] = quaternion.y;
-      this.quaternions[index * 4 + 2] = quaternion.z;
-      this.quaternions[index * 4 + 3] = quaternion.w;
+        this.centers[index * 3 + 0] = center.x;
+        this.centers[index * 3 + 1] = center.y;
+        this.centers[index * 3 + 2] = center.z;
 
-      this.colors[index * 4 + 0] = color.r * 255.0;
-      this.colors[index * 4 + 1] = color.g * 255.0;
-      this.colors[index * 4 + 2] = color.b * 255.0;
-      this.colors[index * 4 + 3] = opacity * 255.0;
-    });
+        this.scales[index * 3 + 0] = scales.x;
+        this.scales[index * 3 + 1] = scales.y;
+        this.scales[index * 3 + 2] = scales.z;
+
+        this.quaternions[index * 4 + 0] = quaternion.x;
+        this.quaternions[index * 4 + 1] = quaternion.y;
+        this.quaternions[index * 4 + 2] = quaternion.z;
+        this.quaternions[index * 4 + 3] = quaternion.w;
+
+        this.colors[index * 4 + 0] = color.r * 255.0;
+        this.colors[index * 4 + 1] = color.g * 255.0;
+        this.colors[index * 4 + 2] = color.b * 255.0;
+        this.colors[index * 4 + 3] = opacity * 255.0;
+      });
+
+      globalIndex += count;
+    }
 
     this.centers0 = new Float32Array(this.centers);
     this.colors0 = new Float32Array(this.colors);
     this.covariances0 = new Float32Array(this.covariances);
+
+    if (this.splatMesh) {
+      this.splatMesh.scenes = this.sceneEntries.map((entry) => entry.sceneTransform);
+      this.splatMesh.geometry.attributes.splatIndex.array = new Uint32Array(this.splatCount);
+    }
   }
 
   syncRange(startIndex = 0, endIndex = this.splatCount - 1) {
-    if (!this.sparkMesh) return;
+    if (!this.sceneEntries.length) return;
 
     const start = Math.max(0, startIndex);
     const end = Math.min(this.splatCount - 1, endIndex);
     if (end < start) return;
 
-    for (let i = start; i <= end; i++) {
-      tempCenter.set(
-        this.centers[i * 3 + 0],
-        this.centers[i * 3 + 1],
-        this.centers[i * 3 + 2]
-      );
-      tempScales.set(
-        this.scales[i * 3 + 0],
-        this.scales[i * 3 + 1],
-        this.scales[i * 3 + 2]
-      );
-      tempQuat.set(
-        this.quaternions[i * 4 + 0],
-        this.quaternions[i * 4 + 1],
-        this.quaternions[i * 4 + 2],
-        this.quaternions[i * 4 + 3]
-      );
-      tempColor.setRGB(
-        this.colors[i * 4 + 0] / 255.0,
-        this.colors[i * 4 + 1] / 255.0,
-        this.colors[i * 4 + 2] / 255.0
-      );
+    for (const { startIndex: sceneStart, endIndex: sceneEnd, entry } of this.sceneRanges) {
+      if (sceneEnd < start || end < sceneStart) {
+        continue;
+      }
 
-      const opacity = THREE.MathUtils.clamp(this.colors[i * 4 + 3] / 255.0, 0.0, 1.0);
-      this.sparkMesh.packedSplats.setSplat(i, tempCenter, tempScales, tempQuat, opacity, tempColor);
+      const localStart = Math.max(start, sceneStart) - sceneStart;
+      const localEnd = Math.min(end, sceneEnd) - sceneStart;
+
+      for (let localIndex = localStart; localIndex <= localEnd; localIndex++) {
+        const globalIndex = sceneStart + localIndex;
+
+        tempCenter.set(
+          this.centers[globalIndex * 3 + 0],
+          this.centers[globalIndex * 3 + 1],
+          this.centers[globalIndex * 3 + 2],
+        );
+        tempScales.set(
+          this.scales[globalIndex * 3 + 0],
+          this.scales[globalIndex * 3 + 1],
+          this.scales[globalIndex * 3 + 2],
+        );
+        tempQuat.set(
+          this.quaternions[globalIndex * 4 + 0],
+          this.quaternions[globalIndex * 4 + 1],
+          this.quaternions[globalIndex * 4 + 2],
+          this.quaternions[globalIndex * 4 + 3],
+        );
+        tempColor.setRGB(
+          this.colors[globalIndex * 4 + 0] / 255.0,
+          this.colors[globalIndex * 4 + 1] / 255.0,
+          this.colors[globalIndex * 4 + 2] / 255.0,
+        );
+
+        const opacity = THREE.MathUtils.clamp(this.colors[globalIndex * 4 + 3] / 255.0, 0.0, 1.0);
+        entry.sparkMesh.packedSplats.setSplat(localIndex, tempCenter, tempScales, tempQuat, opacity, tempColor);
+      }
+
+      entry.sparkMesh.packedSplats.needsUpdate = true;
+      entry.sparkMesh.needsUpdate = true;
     }
-
-    this.sparkMesh.packedSplats.needsUpdate = true;
   }
 
   async applyCharacterSkinning(character, splatVertexIndices, splatRelativePoses) {
+    if (this.sceneEntries.length !== 1) {
+      throw new Error('Character skinning requires a single splat scene.');
+    }
+
     const skinnedMesh = character.currentVrm.scene.children[character.skinnedMeshIndex];
     const skeleton = skinnedMesh.skeleton;
     const positionAttribute = skinnedMesh.geometry.getAttribute('position');
@@ -240,12 +328,11 @@ export class GaussianSplatting extends THREE.Group {
     for (let i = 0; i < this.splatCount; i++) {
       const vertexIndex = splatVertexIndices[i];
       tempVertex.fromBufferAttribute(positionAttribute, vertexIndex);
-      skinnedMesh.applyBoneTransform(vertexIndex, tempVertex);
 
       tempRelativePos.set(
         splatRelativePoses[i * 3 + 0],
         splatRelativePoses[i * 3 + 1],
-        splatRelativePoses[i * 3 + 2]
+        splatRelativePoses[i * 3 + 2],
       );
       tempCenter.copy(tempVertex).add(tempRelativePos);
 
@@ -253,13 +340,13 @@ export class GaussianSplatting extends THREE.Group {
         skinIndexAttribute.getX(vertexIndex),
         skinIndexAttribute.getY(vertexIndex),
         skinIndexAttribute.getZ(vertexIndex),
-        skinIndexAttribute.getW(vertexIndex)
+        skinIndexAttribute.getW(vertexIndex),
       );
       tempBoneWeights.set(
         skinWeightAttribute.getX(vertexIndex),
         skinWeightAttribute.getY(vertexIndex),
         skinWeightAttribute.getZ(vertexIndex),
-        skinWeightAttribute.getW(vertexIndex)
+        skinWeightAttribute.getW(vertexIndex),
       );
 
       const totalWeight = tempBoneWeights.x + tempBoneWeights.y + tempBoneWeights.z + tempBoneWeights.w;
@@ -277,13 +364,13 @@ export class GaussianSplatting extends THREE.Group {
         splat.scales,
         splat.quaternion,
         splat.opacity,
-        splat.color
+        splat.color,
       );
     }
 
-    this.sceneTransform.position.set(0, 0, 0);
-    this.sceneTransform.quaternion.identity();
-    this.sceneTransform.scale.setScalar(1);
+    this.sceneTransform.position.copy(this.sourcePosition);
+    this.sceneTransform.quaternion.copy(this.sourceQuaternion);
+    this.sceneTransform.scale.copy(character.currentVrm.scene.scale);
     this.sceneTransform.updateMatrixWorld(true);
 
     this.sparkMesh.skinning = skinning;
@@ -320,39 +407,45 @@ export class GaussianSplatting extends THREE.Group {
 
   loadGS(urls, scale, gsPosition = [0, 0, 0], quaternion = [0, 0, 1, 0], scene, renderer) {
     this.loadingPromise = (async () => {
+      const normalizedUrls = normalizeUrls(urls);
+      if (normalizedUrls.length === 0) {
+        throw new Error('No Gaussian splat URLs were provided.');
+      }
+
       const viewer = new SparkViewer(scene, renderer);
-      const packedSplats = await loadPackedSplats(urls);
-      const sparkMesh = new SplatMesh({ packedSplats });
-      await sparkMesh.initialized;
 
-      viewer.sparkMesh = sparkMesh;
-      viewer.splatMesh = sparkMesh;
-      viewer.sparkScene.add(sparkMesh);
+      for (const [index, url] of normalizedUrls.entries()) {
+        const packedSplats = await loadPackedSplats(url);
+        const sparkMesh = new SplatMesh({ packedSplats });
+        await sparkMesh.initialized;
+        sparkMesh.maxSh = LEGACY_SPHERICAL_HARMONICS_DEGREE;
+        sparkMesh.updateGenerator();
 
-      const sceneTransform = viewer.sparkScene;
-      sceneTransform.position.set(...gsPosition);
-      sceneTransform.quaternion.set(...quaternion);
-      sceneTransform.scale.setScalar(scale);
-      sceneTransform.updateMatrixWorld(true);
+        const sceneTransform = new THREE.Group();
+        sceneTransform.name = `SparkSplatScene${index}`;
+        sceneTransform.position.set(...gsPosition);
+        sceneTransform.quaternion.set(...quaternion);
+        sceneTransform.scale.setScalar(scale);
+        sceneTransform.updateMatrixWorld(true);
+        sceneTransform.add(sparkMesh);
+        viewer.sparkScene.add(sceneTransform);
 
-      this.splatCount = sparkMesh.packedSplats.numSplats;
-      sparkMesh.scenes = [sceneTransform];
-      sparkMesh.pointCloudModeEnabled = false;
-      sparkMesh.updateDataTexturesFromBaseData = (startIndex = 0, endIndex = this.splatCount - 1) => {
-        this.syncRange(startIndex, endIndex);
-      };
-      sparkMesh.setPointCloudModeEnabled = (enabled) => {
-        sparkMesh.pointCloudModeEnabled = enabled;
-        this.sparkRenderer.maxStdDev = enabled ? 0.35 : Math.sqrt(8.0);
-        this.sparkRenderer.falloff = enabled ? 0.0 : 1.0;
-      };
+        this.sceneEntries.push({ packedSplats, sparkMesh, sceneTransform });
+        viewer.sparkScenes.push(sceneTransform);
+        viewer.sparkMeshes.push(sparkMesh);
+      }
 
       this.viewer = viewer;
-      this.sparkMesh = sparkMesh;
-      this.splatMesh = sparkMesh;
-      this.sceneTransform = sceneTransform;
+      this.sparkMeshes = this.sceneEntries.map((entry) => entry.sparkMesh);
+      this.sparkMesh = this.sparkMeshes[0] ?? null;
+      this.sceneTransform = this.sceneEntries[0]?.sceneTransform ?? null;
+      this.splatMesh = this.createCompatSplatMesh();
+      viewer.sparkMesh = this.sparkMesh;
+      viewer.splatMesh = this.splatMesh;
+
       this.sourcePosition.set(...gsPosition);
       this.sourceQuaternion.set(...quaternion);
+      this.sourceScale = scale;
 
       this.add(viewer);
       this.position0 = new THREE.Vector3(...gsPosition);
@@ -361,6 +454,7 @@ export class GaussianSplatting extends THREE.Group {
       this.matrix0 = new THREE.Matrix4().compose(this.position0, this.quaternion0, new THREE.Vector3(1, 1, 1));
 
       this.rebuildBaseDataCaches();
+      this.applyPointCloudMode(false);
       return this;
     })();
   }

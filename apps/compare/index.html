@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>GVRM Compare Harness</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #fff;
+      font: 13px sans-serif;
+    }
+    header {
+      padding: 12px 16px;
+      position: sticky;
+      top: 0;
+      background: rgba(17, 17, 17, 0.95);
+      border-bottom: 1px solid #333;
+    }
+    #controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    button {
+      background: #222;
+      color: #fff;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    main {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 12px;
+    }
+    iframe {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border: 1px solid #333;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>official (pre-Spark) vs local (Spark migration)</div>
+    <div id="controls"></div>
+  </header>
+  <main>
+    <iframe id="official-frame" src="./official.html"></iframe>
+    <iframe id="local-frame" src="./local.html"></iframe>
+  </main>
+  <script type="module">
+    import { SCENARIO_NAMES } from './poses.js';
+
+    const controls = document.getElementById('controls');
+    const frames = [
+      document.getElementById('official-frame'),
+      document.getElementById('local-frame'),
+    ];
+    const buttons = [];
+
+    let pendingScenario = Promise.resolve();
+
+    async function applyScenario(name) {
+      for (const frame of frames) {
+        const compare = frame.contentWindow?.__compare__;
+        if (compare) {
+          await compare.applyScenario(name);
+        }
+      }
+    }
+
+    async function applyScenarioWithRetry(name) {
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          await applyScenario(name);
+          return;
+        } catch (error) {
+          if (!String(error?.message ?? error).includes('Only one sort at a time')) {
+            throw error;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      throw new Error(`Failed to apply scenario "${name}" after repeated retries.`);
+    }
+
+    function queueScenario(name) {
+      pendingScenario = pendingScenario
+        .catch(() => {})
+        .then(() => applyScenarioWithRetry(name));
+      return pendingScenario;
+    }
+
+    async function waitForCompare(frame) {
+      while (true) {
+        const compare = frame.contentWindow?.__compare__;
+        const ready = frame.contentWindow?.document?.body?.dataset?.ready === 'true';
+        if (compare && ready) {
+          return compare;
+        }
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    }
+
+    const ready = (async () => {
+      const compares = await Promise.all(frames.map(waitForCompare));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (compares.length > 0) {
+        await applyScenarioWithRetry(compares[0].currentScenario ?? 'neutral');
+      }
+      controls.dataset.ready = 'true';
+      buttons.forEach((button) => { button.disabled = false; });
+    })().catch((error) => {
+      controls.dataset.ready = 'error';
+      controls.dataset.error = error.message;
+      console.error(error);
+    });
+
+    window.__compareIndex__ = { applyScenario: queueScenario, ready };
+
+    for (const name of SCENARIO_NAMES) {
+      const button = document.createElement('button');
+      button.textContent = name;
+      button.disabled = true;
+      button.addEventListener('click', () => {
+        buttons.forEach((item) => { item.disabled = true; });
+        setTimeout(async () => {
+          try {
+            await queueScenario(name);
+          } catch (error) {
+            console.error(error);
+          } finally {
+            buttons.forEach((item) => { item.disabled = false; });
+          }
+        }, 0);
+      });
+      controls.appendChild(button);
+      buttons.push(button);
+    }
+  </script>
+</body>
+</html>

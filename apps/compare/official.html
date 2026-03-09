@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Official GVRM Compare</title>
+  <style>
+    body { margin: 0; background: #000; color: #fff; font: 12px monospace; }
+    #wrap { position: relative; width: 640px; height: 640px; }
+    #scenario-label, #renderer-label {
+      position: absolute;
+      left: 10px;
+      padding: 4px 8px;
+      background: rgba(0, 0, 0, 0.65);
+      border-radius: 4px;
+      z-index: 2;
+    }
+    #renderer-label { top: 10px; }
+    #scenario-label { top: 42px; }
+    canvas { display: block; width: 640px; height: 640px; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="renderer-label">official</div>
+    <div id="scenario-label">loading...</div>
+    <canvas id="canvas" width="640" height="640"></canvas>
+  </div>
+  <script>window.__COMPARE_MODE = 'official';</script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
+        "gaussian-splats-3d": "https://naruya.github.io/gs-edit/lib/gaussian-splats-3d.module.js",
+        "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm",
+        "gvrm": "https://naruya.github.io/gs-edit/lib/gaussian-vrm.min.js"
+      }
+    }
+  </script>
+  <script type="module" src="./viewer.js"></script>
+</body>
+</html>

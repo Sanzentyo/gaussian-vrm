@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import * as GVRMUtils from './utils.js';
 import { VRMCharacter } from './vrm.js';
 import { GaussianSplatting } from './gs.js';
+import { PLYParser } from './ply.js';
 import JSZip from 'jszip'
 
 
@@ -109,11 +110,16 @@ export class GVRM extends THREE.Group {
     const character = await GVRM.initVRM(
       vrmUrl, scene, camera, renderer, modelScale, boneOperations);
 
-    const gs = await GVRM.initGS(plyUrl, extraData.gsPosition, extraData.gsQuaternion, scene, renderer);
+    const { sceneSplatIndices, boneSceneMap } = GVRM.sortSplatsByBones(extraData);
+    const parser = new PLYParser();
+    const sceneUrls = await parser.splitPLY(plyUrl, sceneSplatIndices);
+
+    const gs = await GVRM.initGS(sceneUrls, extraData.gsPosition, extraData.gsQuaternion, scene, renderer);
 
     const gvrm = new GVRM(character, gs);
     gvrm.modelScale = modelScale;
     gvrm.boneOperations = boneOperations;
+    gvrm.boneSceneMap = boneSceneMap;
     gvrm.fileName = fileName;
 
     gvrm.updatePMC();
@@ -124,7 +130,6 @@ export class GVRM extends THREE.Group {
     gvrm.gs.splatVertexIndices = extraData.splatVertexIndices;
     gvrm.gs.splatBoneIndices = extraData.splatBoneIndices;
     gvrm.gs.splatRelativePoses = extraData.splatRelativePoses;
-    await GVRM.gsCustomizeMaterial(character, gs);
 
     // cleanup splats that are too far from the associated bone
     for (let i = 0; i < gvrm.gs.splatCount; i++) {
@@ -145,6 +150,28 @@ export class GVRM extends THREE.Group {
     }
 
     gvrm.gs.splatMesh.updateDataTexturesFromBaseData(0, gvrm.gs.splatCount - 1);
+
+    function _traverseNodes(node, depth = 0) {
+      node.children.forEach(function (childNode) {
+        if (childNode.isBone) {
+          const types = [
+            "J_Bip_L_Hand", "J_Bip_L_LowerArm", "J_Bip_R_Hand", "J_Bip_R_LowerArm",
+            "J_Bip_L_LowerLeg", "J_Bip_L_Foot", "J_Bip_R_LowerLeg", "J_Bip_R_Foot",
+            "J_Bip_C_Neck", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest",
+            "J_Bip_C_HeadTop_End",
+            "J_Bip_C_Head"];
+          if (types.includes(childNode.name)) {
+            childNode.updateMatrix();
+            childNode.matrixWorld0 = childNode.matrixWorld.clone();
+          }
+          _traverseNodes(childNode, depth + 1);
+        }
+      });
+    }
+
+    const rootNode = character.currentVrm.scene.children[0].children[0];
+    _traverseNodes(rootNode, 1);
+
     gvrm.vrmWorldPosition0 = new THREE.Vector3();
     gvrm.vrmWorldQuaternion0 = new THREE.Quaternion();
     character.currentVrm.scene.getWorldPosition(gvrm.vrmWorldPosition0);
@@ -159,8 +186,8 @@ export class GVRM extends THREE.Group {
     const vrmBuffer = await fetch(vrmPath).then(response => response.arrayBuffer());
     const plyBuffer = await fetch(gsPath).then(response => response.arrayBuffer());
     const gsScene = gvrm.gs.viewer.splatMesh.scenes[0];
-    const gsQuaternion = gvrm.gs.skinning ? gvrm.gs.sourceQuaternion.toArray() : gsScene.quaternion.toArray();
-    const gsPosition = gvrm.gs.skinning ? gvrm.gs.sourcePosition.toArray() : gsScene.position.toArray();
+    const gsQuaternion = gvrm.gs.sourceQuaternion ? gvrm.gs.sourceQuaternion.toArray() : gsScene.quaternion.toArray();
+    const gsPosition = gvrm.gs.sourcePosition ? gvrm.gs.sourcePosition.toArray() : gsScene.position.toArray();
 
     const extraData = {
       modelScale: modelScale,
@@ -268,7 +295,70 @@ export class GVRM extends THREE.Group {
   }
 
   updateByBones() {
-    this.gs.updateSkinningFromCharacter(this.character);
+    if (this.gs.skinning) {
+      this.gs.updateSkinningFromCharacter(this.character);
+      return;
+    }
+
+    const tempNodePos = new THREE.Vector3();
+    const tempChildPos = new THREE.Vector3();
+    const tempMidPoint = new THREE.Vector3();
+    const tempMat = new THREE.Matrix4();
+    const tempQuat = new THREE.Quaternion();
+    const gsViewerMatrixWorldInverse = new THREE.Matrix4();
+    const gsViewerWorldQuat = new THREE.Quaternion();
+    const gsViewerWorldQuatInverse = new THREE.Quaternion();
+    const noSortBoneList = [
+      "J_Bip_C_Neck", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest", "J_Bip_C_HeadTop_End", "J_Bip_C_Head"
+    ];
+
+    if (!this.boneSceneMap) return;
+
+    const skinnedMesh = this.character.currentVrm.scene.children[this.character.skinnedMeshIndex];
+    const skeleton = skinnedMesh.skeleton;
+
+    this.gs.viewer.updateMatrixWorld();
+    gsViewerMatrixWorldInverse.copy(this.gs.viewer.matrixWorld).invert();
+    this.gs.viewer.getWorldQuaternion(gsViewerWorldQuat);
+    gsViewerWorldQuatInverse.copy(gsViewerWorldQuat).invert();
+
+    skeleton.bones.forEach((bone) => {
+      const children = bone.children;
+      if (children.length === 0) return;
+
+      children.forEach(childBone => {
+        const childIndex = skeleton.bones.indexOf(childBone);
+        const sceneIndex = this.boneSceneMap[childIndex];
+        if (sceneIndex === undefined || !childBone.matrixWorld0) return;
+
+        bone.updateMatrixWorld(true);
+        childBone.updateMatrixWorld(true);
+        tempNodePos.setFromMatrixPosition(bone.matrixWorld);
+        tempChildPos.setFromMatrixPosition(childBone.matrixWorld);
+        tempMidPoint.addVectors(tempNodePos, tempChildPos).multiplyScalar(0.5);
+
+        tempMidPoint.applyMatrix4(gsViewerMatrixWorldInverse);
+
+        tempMat.copy(childBone.matrixWorld).multiply(childBone.matrixWorld0.clone().invert());
+        tempQuat.setFromRotationMatrix(tempMat);
+        tempQuat.premultiply(gsViewerWorldQuatInverse);
+        tempQuat.multiply(this.gs.quaternion0);
+
+        const scene = this.gs.viewer.getSplatScene(sceneIndex);
+        if (scene) {
+          if (!noSortBoneList.includes(childBone.name)) {
+            scene.position.copy(tempMidPoint);
+            scene.quaternion.copy(tempQuat);
+          }
+          let axesHelper = this.debugAxes.get(sceneIndex);
+          if (!axesHelper) {
+            axesHelper = this.createDebugAxes(sceneIndex);
+          }
+          axesHelper.position.copy(tempMidPoint);
+          axesHelper.quaternion.copy(tempQuat);
+        }
+      });
+    });
   }
 
   // deprecated
@@ -284,17 +374,21 @@ export class GVRM extends THREE.Group {
 
   update() {
     if (!this.isReady) return;
-    // Advance the VRM pose first so Spark skinning sees the current frame's bones.
-    this.character.update();
-    // Use local position/quaternion (relative to parent scene)
     let tempQuat = this.character.currentVrm.scene.quaternion.clone();
     let tempQuat0 = this.character.currentVrm.scene.quaternion0.clone();
     let tempPos = this.character.currentVrm.scene.position.clone();
     let tempPos0 = this.character.currentVrm.scene.position0.clone();
     this.gs.viewer.quaternion.copy(tempQuat.multiply(tempQuat0.invert()));
     this.gs.viewer.position.copy(tempPos.sub(tempPos0));
-    // this.t += 1.0; GVRMUtils.simpleAnim(this.character, this.t);  // debug
+
+    if (this.gs.skinning) {
+      this.character.update();
+      this.updateByBones();
+      return;
+    }
+
     this.updateByBones();
+    this.character.update();
   }
 
   static sortSplatsByBones(extraData) {
