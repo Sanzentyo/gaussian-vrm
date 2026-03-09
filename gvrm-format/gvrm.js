@@ -122,12 +122,6 @@ export class GVRM extends THREE.Group {
     gvrm.boneSceneMap = boneSceneMap;
     gvrm.fileName = fileName;
 
-    const trackedBones = new Set([
-      "J_Bip_L_Hand", "J_Bip_L_LowerArm", "J_Bip_R_Hand", "J_Bip_R_LowerArm",
-      "J_Bip_L_LowerLeg", "J_Bip_L_Foot", "J_Bip_R_LowerLeg", "J_Bip_R_Foot",
-      "J_Bip_C_Neck", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest",
-      "J_Bip_C_HeadTop_End", "J_Bip_C_Head"
-    ]);
     const tempNodePos = new THREE.Vector3();
     const tempChildPos = new THREE.Vector3();
     const tempMidPoint = new THREE.Vector3();
@@ -141,9 +135,7 @@ export class GVRM extends THREE.Group {
 
     skeleton.bones.forEach((bone) => {
       bone.updateMatrixWorld(true);
-      if (trackedBones.has(bone.name)) {
-        bone.matrixWorld0 = bone.matrixWorld.clone();
-      }
+      bone.matrixWorld0 = bone.matrixWorld.clone();
 
       bone.children.forEach((childBone) => {
         const childIndex = skeleton.bones.indexOf(childBone);
@@ -323,9 +315,21 @@ export class GVRM extends THREE.Group {
     const tempMidPoint = new THREE.Vector3();
     const tempMat = new THREE.Matrix4();
     const tempQuat = new THREE.Quaternion();
+    const tempSwingQuat = new THREE.Quaternion();
     const gsViewerMatrixWorldInverse = new THREE.Matrix4();
     const gsViewerWorldQuat = new THREE.Quaternion();
     const gsViewerWorldQuatInverse = new THREE.Quaternion();
+    const tempRestParentPos = new THREE.Vector3();
+    const tempRestChildPos = new THREE.Vector3();
+    const tempRestDir = new THREE.Vector3();
+    const tempCurrentDir = new THREE.Vector3();
+    const swingOnlyBoneList = new Set([
+      "J_Bip_L_LowerArm",
+      "J_Bip_R_LowerArm",
+      "J_Bip_L_LowerLeg",
+      "J_Bip_R_LowerLeg",
+    ]);
+    let updatedSceneTransforms = false;
 
     if (!this.boneSceneMap) return;
 
@@ -362,7 +366,31 @@ export class GVRM extends THREE.Group {
         const scene = this.gs.viewer.getSplatScene(sceneIndex);
         if (scene) {
           scene.position.copy(tempMidPoint);
-          scene.quaternion.copy(tempQuat);
+          if (
+            swingOnlyBoneList.has(childBone.name) &&
+            bone.matrixWorld0 &&
+            childBone.matrixWorld0
+          ) {
+            tempRestParentPos.setFromMatrixPosition(bone.matrixWorld0);
+            tempRestChildPos.setFromMatrixPosition(childBone.matrixWorld0);
+            tempRestDir.copy(tempRestChildPos).sub(tempRestParentPos);
+            tempCurrentDir.copy(tempChildPos).sub(tempNodePos);
+
+            if (tempRestDir.lengthSq() > 1e-8 && tempCurrentDir.lengthSq() > 1e-8) {
+              tempSwingQuat.setFromUnitVectors(
+                tempRestDir.normalize(),
+                tempCurrentDir.normalize(),
+              );
+              tempSwingQuat.premultiply(gsViewerWorldQuatInverse);
+              tempSwingQuat.multiply(this.gs.quaternion0);
+              scene.quaternion.copy(tempSwingQuat);
+            } else {
+              scene.quaternion.copy(tempQuat);
+            }
+          } else {
+            scene.quaternion.copy(tempQuat);
+          }
+          updatedSceneTransforms = true;
           let axesHelper = this.debugAxes.get(sceneIndex);
           if (!axesHelper) {
             axesHelper = this.createDebugAxes(sceneIndex);
@@ -372,6 +400,11 @@ export class GVRM extends THREE.Group {
         }
       });
     });
+
+    if (updatedSceneTransforms) {
+      this.gs.viewer.updateMatrixWorld(true);
+      this.gs.sparkRenderer.needsUpdate = true;
+    }
   }
 
   // deprecated
