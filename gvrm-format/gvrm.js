@@ -10,12 +10,59 @@ import { PLYParser } from './ply.js';
 import JSZip from 'jszip'
 
 
+const SEGMENT_LOCAL_AXES = [
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(0, 0, 1),
+];
+
+function pickMostOrthogonalLocalAxis(worldQuaternion, direction, target, tempAxis) {
+  let bestAxis = SEGMENT_LOCAL_AXES[0];
+  let bestScore = Infinity;
+
+  for (const axis of SEGMENT_LOCAL_AXES) {
+    tempAxis.copy(axis).applyQuaternion(worldQuaternion);
+    const score = Math.abs(tempAxis.dot(direction));
+    if (score < bestScore) {
+      bestScore = score;
+      bestAxis = axis;
+    }
+  }
+
+  return target.copy(bestAxis);
+}
+
+function buildSegmentFrame(direction, sideHint, targetQuat, tempMatrix, tempAxisX, tempAxisY, tempAxisZ) {
+  tempAxisZ.copy(direction).normalize();
+  tempAxisX.copy(sideHint).addScaledVector(tempAxisZ, -tempAxisZ.dot(sideHint));
+  if (tempAxisX.lengthSq() <= 1e-8) {
+    let bestAxis = SEGMENT_LOCAL_AXES[0];
+    let bestLengthSq = -1;
+    for (const axis of SEGMENT_LOCAL_AXES) {
+      tempAxisY.copy(axis).addScaledVector(tempAxisZ, -tempAxisZ.dot(axis));
+      const lengthSq = tempAxisY.lengthSq();
+      if (lengthSq > bestLengthSq) {
+        bestLengthSq = lengthSq;
+        bestAxis = axis;
+      }
+    }
+    tempAxisX.copy(bestAxis).addScaledVector(tempAxisZ, -tempAxisZ.dot(bestAxis));
+  }
+
+  tempAxisX.normalize();
+  tempAxisY.crossVectors(tempAxisZ, tempAxisX).normalize();
+  tempMatrix.makeBasis(tempAxisX, tempAxisY, tempAxisZ);
+  return targetQuat.setFromRotationMatrix(tempMatrix);
+}
+
+
 export class GVRM extends THREE.Group {
   constructor(character, gs) {
     super();
     this.character = character;
     this.gs = gs;
     this.debugAxes = new Map();
+    this.sceneFrameData = {};
     this.isReady = false;
     this.t = 0;
   }
@@ -126,9 +173,20 @@ export class GVRM extends THREE.Group {
     const tempChildPos = new THREE.Vector3();
     const tempMidPoint = new THREE.Vector3();
     const viewerMatrixWorldInverse = new THREE.Matrix4();
+    const tempRestParentQuat = new THREE.Quaternion();
+    const tempRestDir = new THREE.Vector3();
+    const tempRestSideAxis = new THREE.Vector3();
+    const tempRestSide = new THREE.Vector3();
+    const tempFrameMatrix = new THREE.Matrix4();
+    const tempFrameAxis = new THREE.Vector3();
+    const tempFrameXAxis = new THREE.Vector3();
+    const tempFrameYAxis = new THREE.Vector3();
+    const tempFrameZAxis = new THREE.Vector3();
+    const tempRestFrameQuat = new THREE.Quaternion();
     const skinnedMesh = character.currentVrm.scene.children[character.skinnedMeshIndex];
     const skeleton = skinnedMesh.skeleton;
     const scenePivots = {};
+    const sceneFrameData = {};
 
     gvrm.gs.viewer.updateMatrixWorld(true);
     viewerMatrixWorldInverse.copy(gvrm.gs.viewer.matrixWorld).invert();
@@ -148,10 +206,37 @@ export class GVRM extends THREE.Group {
         tempMidPoint.addVectors(tempNodePos, tempChildPos).multiplyScalar(0.5);
         tempMidPoint.applyMatrix4(viewerMatrixWorldInverse);
         scenePivots[sceneIndex] = tempMidPoint.toArray();
+
+        tempRestParentQuat.setFromRotationMatrix(bone.matrixWorld0);
+        tempRestDir.copy(tempChildPos).sub(tempNodePos);
+        if (tempRestDir.lengthSq() > 1e-8) {
+          tempRestDir.normalize();
+          pickMostOrthogonalLocalAxis(
+            tempRestParentQuat,
+            tempRestDir,
+            tempRestSideAxis,
+            tempFrameAxis,
+          );
+          tempRestSide.copy(tempRestSideAxis).applyQuaternion(tempRestParentQuat);
+          buildSegmentFrame(
+            tempRestDir,
+            tempRestSide,
+            tempRestFrameQuat,
+            tempFrameMatrix,
+            tempFrameXAxis,
+            tempFrameYAxis,
+            tempFrameZAxis,
+          );
+          sceneFrameData[sceneIndex] = {
+            localSideAxis: tempRestSideAxis.toArray(),
+            restFrameQuaternion: tempRestFrameQuat.toArray(),
+          };
+        }
       });
     });
 
     gvrm.gs.applyScenePivots(scenePivots);
+    gvrm.sceneFrameData = sceneFrameData;
 
     gvrm.updatePMC();
     GVRMUtils.addPMC(scene, gvrm.pmc);
@@ -282,6 +367,7 @@ export class GVRM extends THREE.Group {
     this.fileName = _gvrm.fileName;
     this.vrmWorldPosition0 = _gvrm.vrmWorldPosition0;
     this.vrmWorldQuaternion0 = _gvrm.vrmWorldQuaternion0;
+    this.sceneFrameData = _gvrm.sceneFrameData;
     this.isReady = true;
   }
 
@@ -315,20 +401,20 @@ export class GVRM extends THREE.Group {
     const tempMidPoint = new THREE.Vector3();
     const tempMat = new THREE.Matrix4();
     const tempQuat = new THREE.Quaternion();
-    const tempSwingQuat = new THREE.Quaternion();
+    const tempSceneQuat = new THREE.Quaternion();
     const gsViewerMatrixWorldInverse = new THREE.Matrix4();
     const gsViewerWorldQuat = new THREE.Quaternion();
     const gsViewerWorldQuatInverse = new THREE.Quaternion();
-    const tempRestParentPos = new THREE.Vector3();
-    const tempRestChildPos = new THREE.Vector3();
-    const tempRestDir = new THREE.Vector3();
+    const tempSourceQuat = new THREE.Quaternion();
+    const tempRestFrameQuat = new THREE.Quaternion();
+    const tempSideAxis = new THREE.Vector3();
+    const tempSideHint = new THREE.Vector3();
     const tempCurrentDir = new THREE.Vector3();
-    const swingOnlyBoneList = new Set([
-      "J_Bip_L_LowerArm",
-      "J_Bip_R_LowerArm",
-      "J_Bip_L_LowerLeg",
-      "J_Bip_R_LowerLeg",
-    ]);
+    const tempFrameMatrix = new THREE.Matrix4();
+    const tempFrameAxis = new THREE.Vector3();
+    const tempFrameXAxis = new THREE.Vector3();
+    const tempFrameYAxis = new THREE.Vector3();
+    const tempFrameZAxis = new THREE.Vector3();
     let updatedSceneTransforms = false;
 
     if (!this.boneSceneMap) return;
@@ -366,27 +452,27 @@ export class GVRM extends THREE.Group {
         const scene = this.gs.viewer.getSplatScene(sceneIndex);
         if (scene) {
           scene.position.copy(tempMidPoint);
-          if (
-            swingOnlyBoneList.has(childBone.name) &&
-            bone.matrixWorld0 &&
-            childBone.matrixWorld0
-          ) {
-            tempRestParentPos.setFromMatrixPosition(bone.matrixWorld0);
-            tempRestChildPos.setFromMatrixPosition(childBone.matrixWorld0);
-            tempRestDir.copy(tempRestChildPos).sub(tempRestParentPos);
-            tempCurrentDir.copy(tempChildPos).sub(tempNodePos);
 
-            if (tempRestDir.lengthSq() > 1e-8 && tempCurrentDir.lengthSq() > 1e-8) {
-              tempSwingQuat.setFromUnitVectors(
-                tempRestDir.normalize(),
-                tempCurrentDir.normalize(),
-              );
-              tempSwingQuat.premultiply(gsViewerWorldQuatInverse);
-              tempSwingQuat.multiply(this.gs.quaternion0);
-              scene.quaternion.copy(tempSwingQuat);
-            } else {
-              scene.quaternion.copy(tempQuat);
-            }
+          const frameData = this.sceneFrameData?.[sceneIndex];
+          tempCurrentDir.copy(tempChildPos).sub(tempNodePos);
+          if (frameData && tempCurrentDir.lengthSq() > 1e-8) {
+            tempSourceQuat.copy(bone.getWorldQuaternion(tempSourceQuat));
+            tempSideAxis.fromArray(frameData.localSideAxis);
+            tempSideHint.copy(tempSideAxis).applyQuaternion(tempSourceQuat);
+            buildSegmentFrame(
+              tempCurrentDir.normalize(),
+              tempSideHint,
+              tempSceneQuat,
+              tempFrameMatrix,
+              tempFrameXAxis,
+              tempFrameYAxis,
+              tempFrameZAxis,
+            );
+            tempRestFrameQuat.fromArray(frameData.restFrameQuaternion);
+            tempSceneQuat.multiply(tempRestFrameQuat.invert());
+            tempSceneQuat.premultiply(gsViewerWorldQuatInverse);
+            tempSceneQuat.multiply(this.gs.quaternion0);
+            scene.quaternion.copy(tempSceneQuat);
           } else {
             scene.quaternion.copy(tempQuat);
           }
@@ -396,7 +482,7 @@ export class GVRM extends THREE.Group {
             axesHelper = this.createDebugAxes(sceneIndex);
           }
           axesHelper.position.copy(tempMidPoint);
-          axesHelper.quaternion.copy(tempQuat);
+          axesHelper.quaternion.copy(scene.quaternion);
         }
       });
     });
