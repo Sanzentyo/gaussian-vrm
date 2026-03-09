@@ -122,6 +122,45 @@ export class GVRM extends THREE.Group {
     gvrm.boneSceneMap = boneSceneMap;
     gvrm.fileName = fileName;
 
+    const trackedBones = new Set([
+      "J_Bip_L_Hand", "J_Bip_L_LowerArm", "J_Bip_R_Hand", "J_Bip_R_LowerArm",
+      "J_Bip_L_LowerLeg", "J_Bip_L_Foot", "J_Bip_R_LowerLeg", "J_Bip_R_Foot",
+      "J_Bip_C_Neck", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest",
+      "J_Bip_C_HeadTop_End", "J_Bip_C_Head"
+    ]);
+    const tempNodePos = new THREE.Vector3();
+    const tempChildPos = new THREE.Vector3();
+    const tempMidPoint = new THREE.Vector3();
+    const viewerMatrixWorldInverse = new THREE.Matrix4();
+    const skinnedMesh = character.currentVrm.scene.children[character.skinnedMeshIndex];
+    const skeleton = skinnedMesh.skeleton;
+    const scenePivots = {};
+
+    gvrm.gs.viewer.updateMatrixWorld(true);
+    viewerMatrixWorldInverse.copy(gvrm.gs.viewer.matrixWorld).invert();
+
+    skeleton.bones.forEach((bone) => {
+      bone.updateMatrixWorld(true);
+      if (trackedBones.has(bone.name)) {
+        bone.matrixWorld0 = bone.matrixWorld.clone();
+      }
+
+      bone.children.forEach((childBone) => {
+        const childIndex = skeleton.bones.indexOf(childBone);
+        const sceneIndex = boneSceneMap[childIndex];
+        if (sceneIndex === undefined) return;
+
+        childBone.updateMatrixWorld(true);
+        tempNodePos.setFromMatrixPosition(bone.matrixWorld);
+        tempChildPos.setFromMatrixPosition(childBone.matrixWorld);
+        tempMidPoint.addVectors(tempNodePos, tempChildPos).multiplyScalar(0.5);
+        tempMidPoint.applyMatrix4(viewerMatrixWorldInverse);
+        scenePivots[sceneIndex] = tempMidPoint.toArray();
+      });
+    });
+
+    gvrm.gs.applyScenePivots(scenePivots);
+
     gvrm.updatePMC();
     GVRMUtils.addPMC(scene, gvrm.pmc);
     GVRMUtils.visualizePMC(gvrm.pmc, false);
@@ -150,27 +189,6 @@ export class GVRM extends THREE.Group {
     }
 
     gvrm.gs.splatMesh.updateDataTexturesFromBaseData(0, gvrm.gs.splatCount - 1);
-
-    function _traverseNodes(node, depth = 0) {
-      node.children.forEach(function (childNode) {
-        if (childNode.isBone) {
-          const types = [
-            "J_Bip_L_Hand", "J_Bip_L_LowerArm", "J_Bip_R_Hand", "J_Bip_R_LowerArm",
-            "J_Bip_L_LowerLeg", "J_Bip_L_Foot", "J_Bip_R_LowerLeg", "J_Bip_R_Foot",
-            "J_Bip_C_Neck", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest",
-            "J_Bip_C_HeadTop_End",
-            "J_Bip_C_Head"];
-          if (types.includes(childNode.name)) {
-            childNode.updateMatrix();
-            childNode.matrixWorld0 = childNode.matrixWorld.clone();
-          }
-          _traverseNodes(childNode, depth + 1);
-        }
-      });
-    }
-
-    const rootNode = character.currentVrm.scene.children[0].children[0];
-    _traverseNodes(rootNode, 1);
 
     gvrm.vrmWorldPosition0 = new THREE.Vector3();
     gvrm.vrmWorldQuaternion0 = new THREE.Quaternion();
@@ -308,9 +326,6 @@ export class GVRM extends THREE.Group {
     const gsViewerMatrixWorldInverse = new THREE.Matrix4();
     const gsViewerWorldQuat = new THREE.Quaternion();
     const gsViewerWorldQuatInverse = new THREE.Quaternion();
-    const noSortBoneList = [
-      "J_Bip_C_Neck", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest", "J_Bip_C_HeadTop_End", "J_Bip_C_Head"
-    ];
 
     if (!this.boneSceneMap) return;
 
@@ -346,10 +361,8 @@ export class GVRM extends THREE.Group {
 
         const scene = this.gs.viewer.getSplatScene(sceneIndex);
         if (scene) {
-          if (!noSortBoneList.includes(childBone.name)) {
-            scene.position.copy(tempMidPoint);
-            scene.quaternion.copy(tempQuat);
-          }
+          scene.position.copy(tempMidPoint);
+          scene.quaternion.copy(tempQuat);
           let axesHelper = this.debugAxes.get(sceneIndex);
           if (!axesHelper) {
             axesHelper = this.createDebugAxes(sceneIndex);

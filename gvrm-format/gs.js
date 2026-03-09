@@ -290,6 +290,45 @@ export class GaussianSplatting extends THREE.Group {
     }
   }
 
+  applyScenePivots(scenePivots) {
+    if (!scenePivots || !this.sceneEntries.length) return;
+
+    const inverseQuaternion0 = this.quaternion0.clone().invert();
+    const pivot = new THREE.Vector3();
+    const pivotLocal = new THREE.Vector3();
+
+    for (const [sceneIndexText, pivotValue] of Object.entries(scenePivots)) {
+      const sceneIndex = Number(sceneIndexText);
+      const entry = this.sceneEntries[sceneIndex];
+      if (!entry) continue;
+
+      if (Array.isArray(pivotValue)) {
+        pivot.fromArray(pivotValue);
+      } else {
+        pivot.copy(pivotValue);
+      }
+
+      pivotLocal.copy(pivot).sub(this.position0).applyQuaternion(inverseQuaternion0);
+      if (this.sourceScale !== 0 && this.sourceScale !== 1) {
+        pivotLocal.divideScalar(this.sourceScale);
+      }
+
+      entry.sparkMesh.forEachSplat((localIndex, center, scales, quaternion, opacity, color) => {
+        tempCenter.copy(center).sub(pivotLocal);
+        entry.packedSplats.setSplat(localIndex, tempCenter, scales, quaternion, opacity, color);
+      });
+
+      entry.packedSplats.needsUpdate = true;
+      entry.sparkMesh.needsUpdate = true;
+      entry.sceneTransform.position.copy(pivot);
+      entry.sceneTransform.quaternion.copy(this.quaternion0);
+      entry.sceneTransform.scale.setScalar(this.sourceScale);
+      entry.sceneTransform.updateMatrixWorld(true);
+    }
+
+    this.rebuildBaseDataCaches();
+  }
+
   async applyCharacterSkinning(character, splatVertexIndices, splatRelativePoses) {
     if (this.sceneEntries.length !== 1) {
       throw new Error('Character skinning requires a single splat scene.');
