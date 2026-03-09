@@ -56,6 +56,20 @@ function buildSegmentFrame(direction, sideHint, targetQuat, tempMatrix, tempAxis
 }
 
 
+function normalizeLoadOptions(fileNameOrOptions = null, maybeOptions = {}) {
+  if (fileNameOrOptions && typeof fileNameOrOptions === 'object' && !Array.isArray(fileNameOrOptions)) {
+    return {
+      fileName: fileNameOrOptions.fileName ?? null,
+      ...fileNameOrOptions,
+    };
+  }
+  return {
+    fileName: fileNameOrOptions ?? null,
+    ...maybeOptions,
+  };
+}
+
+
 export class GVRM extends THREE.Group {
   constructor(character, gs) {
     super();
@@ -125,15 +139,16 @@ export class GVRM extends THREE.Group {
   }
 
 
-  static async initGS(gsPath, gsPosition, gsQuaternion, scene, renderer) {
-    const gs = new GaussianSplatting(gsPath, 1, gsPosition, gsQuaternion, scene, renderer);
+  static async initGS(gsPath, gsPosition, gsQuaternion, scene, renderer, options = {}) {
+    const gs = new GaussianSplatting(gsPath, 1, gsPosition, gsQuaternion, scene, renderer, options);
     await gs.loadingPromise;
     scene.add(gs);
     return gs;
   }
 
 
-  static async load(url, scene, camera, renderer, fileName) {
+  static async load(url, scene, camera, renderer, fileNameOrOptions = null, maybeOptions = {}) {
+    const { fileName, ...options } = normalizeLoadOptions(fileNameOrOptions, maybeOptions);
     console.log('Loading GVRM:', url);
     const response = await fetch(url);
     const zip = await JSZip.loadAsync(response.arrayBuffer());
@@ -161,7 +176,14 @@ export class GVRM extends THREE.Group {
     const parser = new PLYParser();
     const sceneUrls = await parser.splitPLY(plyUrl, sceneSplatIndices);
 
-    const gs = await GVRM.initGS(sceneUrls, extraData.gsPosition, extraData.gsQuaternion, scene, renderer);
+    const gs = await GVRM.initGS(
+      sceneUrls,
+      extraData.gsPosition,
+      extraData.gsQuaternion,
+      scene,
+      renderer,
+      options,
+    );
 
     const gvrm = new GVRM(character, gs);
     gvrm.modelScale = modelScale;
@@ -352,8 +374,8 @@ export class GVRM extends THREE.Group {
     }
   }
 
-  async load(url, scene, camera, renderer, fileName=null) {
-    const _gvrm = await GVRM.load(url, scene, camera, renderer, fileName);
+  async load(url, scene, camera, renderer, fileNameOrOptions = null, maybeOptions = {}) {
+    const _gvrm = await GVRM.load(url, scene, camera, renderer, fileNameOrOptions, maybeOptions);
 
     // TODO: refactor
     this.character = _gvrm.character;

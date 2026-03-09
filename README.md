@@ -68,6 +68,31 @@ renderer.setAnimationLoop(() => {
 **For more usage, please check 👉 [Gaussian-VRM Examples](https://github.com/naruya/gaussian-vrm/tree/main/examples) 👈**
 
 
+### Reuse an Existing SparkRenderer
+
+If you already created a Spark renderer outside GVRM, you can pass it through the optional last argument:
+
+```javascript
+import { SparkRenderer } from '@sparkjsdev/spark';
+import { GVRM } from 'gvrm';
+
+const sparkRenderer = new SparkRenderer({ renderer });
+scene.add(sparkRenderer);
+
+const gvrm = await GVRM.load('./assets/author.gvrm', scene, camera, renderer, {
+  sparkRenderer,
+});
+```
+
+If you also want to pass a file name, use the sixth argument:
+
+```javascript
+const gvrm = await GVRM.load('./assets/author.gvrm', scene, camera, renderer, 'author.gvrm', {
+  sparkRenderer,
+});
+```
+
+
 ## Advanced Examples
 
 ### Embed in Your Website

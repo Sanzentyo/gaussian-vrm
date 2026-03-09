@@ -23,22 +23,36 @@ const tempBoneIndices = new THREE.Vector4();
 const tempBoneWeights = new THREE.Vector4();
 
 
-function ensureSparkRenderer(scene, renderer) {
-  if (!scene.userData.sparkRenderer) {
-    const sparkRenderer = new SparkRenderer({
-      renderer,
-    });
+function configureSparkRenderer(sparkRenderer, scene) {
+  if (!sparkRenderer.name) {
     sparkRenderer.name = 'SparkRenderer';
-    sparkRenderer.frustumCulled = false;
+  }
+  sparkRenderer.frustumCulled = false;
+  if (!sparkRenderer.userData.defaultRenderSettings) {
     sparkRenderer.userData.defaultRenderSettings = {
       maxStdDev: sparkRenderer.maxStdDev,
       minPixelRadius: sparkRenderer.minPixelRadius,
       falloff: sparkRenderer.falloff,
     };
-    scene.add(sparkRenderer);
-    scene.userData.sparkRenderer = sparkRenderer;
   }
-  return scene.userData.sparkRenderer;
+  if (!sparkRenderer.parent) {
+    scene.add(sparkRenderer);
+  }
+  scene.userData.sparkRenderer = sparkRenderer;
+  return sparkRenderer;
+}
+
+
+function ensureSparkRenderer(scene, renderer, sparkRenderer = null) {
+  if (sparkRenderer) {
+    return configureSparkRenderer(sparkRenderer, scene);
+  }
+  if (!scene.userData.sparkRenderer) {
+    scene.userData.sparkRenderer = new SparkRenderer({
+      renderer,
+    });
+  }
+  return configureSparkRenderer(scene.userData.sparkRenderer, scene);
 }
 
 
@@ -84,10 +98,10 @@ export function createLoadingSpinner() {
 
 
 class SparkViewer extends THREE.Group {
-  constructor(scene, renderer) {
+  constructor(scene, renderer, options = {}) {
     super();
     this.loadingSpinner = createLoadingSpinner();
-    this.sparkRenderer = ensureSparkRenderer(scene, renderer);
+    this.sparkRenderer = ensureSparkRenderer(scene, renderer, options.sparkRenderer);
     this.sparkScene = new THREE.Group();
     this.sparkScene.name = 'SparkSplatRoot';
     this.sparkScenes = [];
@@ -125,9 +139,9 @@ class SparkViewer extends THREE.Group {
 
 
 export class GaussianSplatting extends THREE.Group {
-  constructor(urls, scale, gsPosition, quaternion, scene, renderer) {
+  constructor(urls, scale, gsPosition, quaternion, scene, renderer, options = {}) {
     super();
-    this.sparkRenderer = ensureSparkRenderer(scene, renderer);
+    this.sparkRenderer = ensureSparkRenderer(scene, renderer, options.sparkRenderer);
     this.sceneEntries = [];
     this.sceneRanges = [];
     this.sparkMeshes = [];
@@ -135,7 +149,7 @@ export class GaussianSplatting extends THREE.Group {
     this.sourcePosition = new THREE.Vector3();
     this.sourceQuaternion = new THREE.Quaternion();
     this.sourceScale = scale;
-    this.loadGS(urls, scale, gsPosition, quaternion, scene, renderer);
+    this.loadGS(urls, scale, gsPosition, quaternion, scene, renderer, options);
   }
 
   createCompatSplatMesh() {
@@ -444,14 +458,14 @@ export class GaussianSplatting extends THREE.Group {
     this.skinning.updateBones();
   }
 
-  loadGS(urls, scale, gsPosition = [0, 0, 0], quaternion = [0, 0, 1, 0], scene, renderer) {
+  loadGS(urls, scale, gsPosition = [0, 0, 0], quaternion = [0, 0, 1, 0], scene, renderer, options = {}) {
     this.loadingPromise = (async () => {
       const normalizedUrls = normalizeUrls(urls);
       if (normalizedUrls.length === 0) {
         throw new Error('No Gaussian splat URLs were provided.');
       }
 
-      const viewer = new SparkViewer(scene, renderer);
+      const viewer = new SparkViewer(scene, renderer, options);
 
       for (const [index, url] of normalizedUrls.entries()) {
         const packedSplats = await loadPackedSplats(url);
