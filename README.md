@@ -92,6 +92,19 @@ const gvrm = await GVRM.load('./assets/author.gvrm', scene, camera, renderer, 'a
 });
 ```
 
+### Enable Spark Skinning
+
+To let Spark drive the splat deformation directly from the VRM skeleton, enable `sparkSkinning`:
+
+```javascript
+const gvrm = await GVRM.load('./assets/author.gvrm', scene, camera, renderer, {
+  sparkRenderer,
+  sparkSkinning: true,
+});
+```
+
+This path keeps using Spark, but switches GVRM loading from the split-scene rigid transform mode to Spark's per-splat skinning path.
+
 
 ## Advanced Examples
 

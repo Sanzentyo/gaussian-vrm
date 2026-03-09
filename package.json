@@ -4,14 +4,17 @@
   "description": "3D Gaussian Splatting with VRM character animation",
   "main": "lib/gaussian-vrm.bundled.js",
   "module": "lib/gaussian-vrm.bundled.js",
+  "types": "lib/gaussian-vrm.d.ts",
   "type": "module",
   "exports": {
     ".": {
+      "types": "./lib/gaussian-vrm.d.ts",
       "import": "./lib/gaussian-vrm.bundled.js"
     }
   },
   "files": [
-    "lib/gaussian-vrm.bundled.js"
+    "lib/gaussian-vrm.bundled.js",
+    "lib/gaussian-vrm.d.ts"
   ],
   "peerDependencies": {
     "three": "^0.183.2",

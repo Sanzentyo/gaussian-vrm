@@ -149,6 +149,7 @@ export class GVRM extends THREE.Group {
 
   static async load(url, scene, camera, renderer, fileNameOrOptions = null, maybeOptions = {}) {
     const { fileName, ...options } = normalizeLoadOptions(fileNameOrOptions, maybeOptions);
+    const useSparkSkinning = options.sparkSkinning === true;
     console.log('Loading GVRM:', url);
     const response = await fetch(url);
     const zip = await JSZip.loadAsync(response.arrayBuffer());
@@ -168,16 +169,24 @@ export class GVRM extends THREE.Group {
     if (extraData.splatRelativePoses === undefined) {  // TODO: remove
       extraData.splatRelativePoses = extraData.relativePoses;
     }
+    if (useSparkSkinning && (!extraData.splatVertexIndices || !extraData.splatRelativePoses)) {
+      throw new Error('Spark skinning requires splatVertexIndices and splatRelativePoses in GVRM data.');
+    }
 
     const character = await GVRM.initVRM(
       vrmUrl, scene, camera, renderer, modelScale, boneOperations);
 
-    const { sceneSplatIndices, boneSceneMap } = GVRM.sortSplatsByBones(extraData);
-    const parser = new PLYParser();
-    const sceneUrls = await parser.splitPLY(plyUrl, sceneSplatIndices);
+    let boneSceneMap = undefined;
+    let gsSource = plyUrl;
+    if (!useSparkSkinning) {
+      const { sceneSplatIndices, boneSceneMap: _boneSceneMap } = GVRM.sortSplatsByBones(extraData);
+      const parser = new PLYParser();
+      gsSource = await parser.splitPLY(plyUrl, sceneSplatIndices);
+      boneSceneMap = _boneSceneMap;
+    }
 
     const gs = await GVRM.initGS(
-      sceneUrls,
+      gsSource,
       extraData.gsPosition,
       extraData.gsQuaternion,
       scene,
@@ -190,6 +199,7 @@ export class GVRM extends THREE.Group {
     gvrm.boneOperations = boneOperations;
     gvrm.boneSceneMap = boneSceneMap;
     gvrm.fileName = fileName;
+    gvrm.sparkSkinning = useSparkSkinning;
 
     const tempNodePos = new THREE.Vector3();
     const tempChildPos = new THREE.Vector3();
@@ -210,55 +220,62 @@ export class GVRM extends THREE.Group {
     const scenePivots = {};
     const sceneFrameData = {};
 
-    gvrm.gs.viewer.updateMatrixWorld(true);
-    viewerMatrixWorldInverse.copy(gvrm.gs.viewer.matrixWorld).invert();
+    if (!useSparkSkinning) {
+      gvrm.gs.viewer.updateMatrixWorld(true);
+      viewerMatrixWorldInverse.copy(gvrm.gs.viewer.matrixWorld).invert();
 
-    skeleton.bones.forEach((bone) => {
-      bone.updateMatrixWorld(true);
-      bone.matrixWorld0 = bone.matrixWorld.clone();
+      skeleton.bones.forEach((bone) => {
+        bone.updateMatrixWorld(true);
+        bone.matrixWorld0 = bone.matrixWorld.clone();
 
-      bone.children.forEach((childBone) => {
-        const childIndex = skeleton.bones.indexOf(childBone);
-        const sceneIndex = boneSceneMap[childIndex];
-        if (sceneIndex === undefined) return;
+        bone.children.forEach((childBone) => {
+          const childIndex = skeleton.bones.indexOf(childBone);
+          const sceneIndex = boneSceneMap[childIndex];
+          if (sceneIndex === undefined) return;
 
-        childBone.updateMatrixWorld(true);
-        tempNodePos.setFromMatrixPosition(bone.matrixWorld);
-        tempChildPos.setFromMatrixPosition(childBone.matrixWorld);
-        tempMidPoint.addVectors(tempNodePos, tempChildPos).multiplyScalar(0.5);
-        tempMidPoint.applyMatrix4(viewerMatrixWorldInverse);
-        scenePivots[sceneIndex] = tempMidPoint.toArray();
+          childBone.updateMatrixWorld(true);
+          tempNodePos.setFromMatrixPosition(bone.matrixWorld);
+          tempChildPos.setFromMatrixPosition(childBone.matrixWorld);
+          tempMidPoint.addVectors(tempNodePos, tempChildPos).multiplyScalar(0.5);
+          tempMidPoint.applyMatrix4(viewerMatrixWorldInverse);
+          scenePivots[sceneIndex] = tempMidPoint.toArray();
 
-        tempRestParentQuat.setFromRotationMatrix(bone.matrixWorld0);
-        tempRestDir.copy(tempChildPos).sub(tempNodePos);
-        if (tempRestDir.lengthSq() > 1e-8) {
-          tempRestDir.normalize();
-          pickMostOrthogonalLocalAxis(
-            tempRestParentQuat,
-            tempRestDir,
-            tempRestSideAxis,
-            tempFrameAxis,
-          );
-          tempRestSide.copy(tempRestSideAxis).applyQuaternion(tempRestParentQuat);
-          buildSegmentFrame(
-            tempRestDir,
-            tempRestSide,
-            tempRestFrameQuat,
-            tempFrameMatrix,
-            tempFrameXAxis,
-            tempFrameYAxis,
-            tempFrameZAxis,
-          );
-          sceneFrameData[sceneIndex] = {
-            localSideAxis: tempRestSideAxis.toArray(),
-            restFrameQuaternion: tempRestFrameQuat.toArray(),
-          };
-        }
+          tempRestParentQuat.setFromRotationMatrix(bone.matrixWorld0);
+          tempRestDir.copy(tempChildPos).sub(tempNodePos);
+          if (tempRestDir.lengthSq() > 1e-8) {
+            tempRestDir.normalize();
+            pickMostOrthogonalLocalAxis(
+              tempRestParentQuat,
+              tempRestDir,
+              tempRestSideAxis,
+              tempFrameAxis,
+            );
+            tempRestSide.copy(tempRestSideAxis).applyQuaternion(tempRestParentQuat);
+            buildSegmentFrame(
+              tempRestDir,
+              tempRestSide,
+              tempRestFrameQuat,
+              tempFrameMatrix,
+              tempFrameXAxis,
+              tempFrameYAxis,
+              tempFrameZAxis,
+            );
+            sceneFrameData[sceneIndex] = {
+              localSideAxis: tempRestSideAxis.toArray(),
+              restFrameQuaternion: tempRestFrameQuat.toArray(),
+            };
+          }
+        });
       });
-    });
 
-    gvrm.gs.applyScenePivots(scenePivots);
-    gvrm.sceneFrameData = sceneFrameData;
+      gvrm.gs.applyScenePivots(scenePivots);
+      gvrm.sceneFrameData = sceneFrameData;
+    } else {
+      skeleton.bones.forEach((bone) => {
+        bone.updateMatrixWorld(true);
+        bone.matrixWorld0 = bone.matrixWorld.clone();
+      });
+    }
 
     gvrm.updatePMC();
     GVRMUtils.addPMC(scene, gvrm.pmc);
@@ -268,6 +285,9 @@ export class GVRM extends THREE.Group {
     gvrm.gs.splatVertexIndices = extraData.splatVertexIndices;
     gvrm.gs.splatBoneIndices = extraData.splatBoneIndices;
     gvrm.gs.splatRelativePoses = extraData.splatRelativePoses;
+    if (useSparkSkinning) {
+      await GVRM.gsCustomizeMaterial(character, gvrm.gs);
+    }
 
     // cleanup splats that are too far from the associated bone
     for (let i = 0; i < gvrm.gs.splatCount; i++) {
