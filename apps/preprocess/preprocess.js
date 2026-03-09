@@ -6,8 +6,8 @@ import * as THREE from 'three';
 import { GVRM } from '../../gvrm-format/gvrm.js';
 import { PLYParser } from '../../gvrm-format/ply.js';
 import * as GVRMUtils from '../../gvrm-format/utils.js';
+import { createLoadingSpinner } from '../../gvrm-format/gs.js';
 import { PoseDetector } from './pose.js';
-import { DropInViewer } from 'gaussian-splats-3d';
 import { assignSplatsToBonesGL, assignSplatsToPointsGL } from './preprocess_gl.js';
 import { finalCheck } from './check.js';
 
@@ -73,7 +73,7 @@ async function assignSplatsToBones(gs, capsules, capsuleBoneIndex, fast = false)
       document.getElementById('loaddisplay').innerHTML = progress.toFixed(1) + '% (1/3)';
       // allowing the browser to render asynchronously
       // don't call this for every splat
-      gs.splatMesh.updateDataTexturesFromBaseData(0, gs.splatCount - 1);
+      gs.splatMesh.updateDataTexturesFromBaseData(Math.max(0, i - 100), i);
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
@@ -142,7 +142,6 @@ async function assignSplatsToPoints(character, gs, capsules, capsuleBoneIndex, f
     if (i % 100 == 0) {
       let progress = (i / position.count) * 100;
       document.getElementById('loaddisplay').innerHTML = progress.toFixed(1) + '% (2/3)';
-      gs.splatMesh.updateDataTexturesFromBaseData(0, gs.splatCount - 1);
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
@@ -194,7 +193,6 @@ async function assignSplatsToPoints(character, gs, capsules, capsuleBoneIndex, f
     if (i % 100 == 0) {
       let progress = (i / gs.splatCount) * 100;
       document.getElementById('loaddisplay').innerHTML = progress.toFixed(1) + '% (3/3)';
-      gs.splatMesh.updateDataTexturesFromBaseData(0, gs.splatCount - 1);
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
@@ -699,7 +697,7 @@ export async function preprocess(vrmPath, gsPath, scene, camera, renderer, stage
   let vrmScale = null;
   const cameraPosition0 = new THREE.Vector3().copy(camera.position);
   const poseDetector = new PoseDetector(scene, camera, renderer);
-  let loadingSpinner = new DropInViewer().viewer.loadingSpinner;
+  let loadingSpinner = createLoadingSpinner();
   console.log("hints", hints);
 
   async function moveCameraAndDetect_(camera, scene, renderer, poseDetector, angle, radius, radiusMultiplier = 1.0, visualize = true) {
@@ -729,7 +727,7 @@ export async function preprocess(vrmPath, gsPath, scene, camera, renderer, stage
         camera.lookAt(0, 0, 0);
         camera.updateMatrixWorld();
 
-        gs0 = await GVRM.initGS(gsPath, undefined, undefined, scene);
+        gs0 = await GVRM.initGS(gsPath, undefined, undefined, scene, renderer);
         for (let i = 0; i < gs0.splatCount; i++) {
           gs0.colors[i * 4 + 3] /= 12.0;
         }
@@ -751,7 +749,7 @@ export async function preprocess(vrmPath, gsPath, scene, camera, renderer, stage
         camera.updateMatrixWorld();
 
         // background gs
-        gs0 = await GVRM.initGS(gsPaths.slice(1), undefined, undefined, scene);
+        gs0 = await GVRM.initGS(gsPaths.slice(1), undefined, undefined, scene, renderer);
 
         for (let i = 0; i < gs0.splatCount; i++) {
           gs0.colors[i * 4 + 3] /= 12.0;
@@ -765,7 +763,7 @@ export async function preprocess(vrmPath, gsPath, scene, camera, renderer, stage
 
     // main gs
     try {
-      gs = await GVRM.initGS(gsPath, undefined, undefined, scene);
+      gs = await GVRM.initGS(gsPath, undefined, undefined, scene, renderer);
       character = await GVRM.initVRM(vrmPath, scene, camera, renderer, vrmScale);
     } catch (error) {
       console.error(`Error loading main GS or VRM: ${error.message}`);
@@ -1124,7 +1122,7 @@ export async function preprocess(vrmPath, gsPath, scene, camera, renderer, stage
         gs0.colors[i * 4 + 3] = gs0.colors0[i * 4 + 3] / 12.0;
       }
       gs0.splatMesh.updateDataTexturesFromBaseData(0, gs0.splatCount - 1);
-      gs0.viewer.viewer.splatMesh.renderOrder = -1;
+      gs0.viewer.splatMesh.renderOrder = -1;
     }
 
     const gvrm = new GVRM(character, gs);

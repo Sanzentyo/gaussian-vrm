@@ -2,7 +2,7 @@
 
 ## gaussian-splats-3d.module.js
 
-This file is based on [@mkkellogg/gaussian-splats-3d@0.4.7](https://www.npmjs.com/package/@mkkellogg/gaussian-splats-3d) with custom modifications for GVRM.
+This file is a legacy local copy based on [@mkkellogg/gaussian-splats-3d@0.4.7](https://www.npmjs.com/package/@mkkellogg/gaussian-splats-3d) with custom modifications for the pre-Spark GVRM pipeline. The current app and library builds now use `@sparkjsdev/spark` instead of this file.
 
 ### 1. Download
 

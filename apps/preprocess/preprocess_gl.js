@@ -426,7 +426,7 @@ export async function assignSplatsToBonesGL(gs, capsules, capsuleBoneIndex) {
       if (offset % 1000 === 0 || offset + currentBatchSize >= gs.splatCount) {
         let progress = ((offset + currentBatchSize) / gs.splatCount) * 100;
         document.getElementById('loaddisplay').innerHTML = progress.toFixed(1) + '% (1/3)';
-        gs.splatMesh.updateDataTexturesFromBaseData(0, gs.splatCount - 1);
+        gs.splatMesh.updateDataTexturesFromBaseData(offset, offset + currentBatchSize - 1);
         await new Promise(resolve => setTimeout(resolve, 0));
       }
       

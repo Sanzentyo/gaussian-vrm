@@ -16,7 +16,7 @@ Check out the [Sample Avatars](#sample-avatars) section below for details.
 
 # Gaussian-VRM
 
-**Gaussian-VRM (GVRM)** is a three.js implementation of **Instant Skinned Gaussian Avatars**. GVRM is built on top of [three-vrm](https://github.com/pixiv/three-vrm) and [gaussian-splats-3d](https://github.com/mkkellogg/GaussianSplats3D). GVRM can handle avatars as standard three.js objects, allowing you to directly reuse VRM format avatar operations (such as movement and animations).
+**Gaussian-VRM (GVRM)** is a three.js implementation of **Instant Skinned Gaussian Avatars**. GVRM is built on top of [three-vrm](https://github.com/pixiv/three-vrm) and [Spark](https://github.com/sparkjsdev/spark). GVRM can handle avatars as standard three.js objects, allowing you to directly reuse VRM format avatar operations (such as movement and animations). Spark currently targets Three.js + WebGLRenderer rather than WebGPURenderer.
 
 **For detailed usage instructions, please check 👉 [Gaussian-VRM Examples](https://github.com/naruya/gaussian-vrm/tree/main/examples) 👈**
 

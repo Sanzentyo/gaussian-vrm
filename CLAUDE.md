@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Core Technology Stack
 
 - **Three.js** (v0.170.0): 3D rendering engine
-- **Gaussian Splats 3D**: Custom library for rendering Gaussian splatting point clouds (`lib/gaussian-splats-3d.module.js`)
+- **Spark**: Gaussian splat renderer integrated with Three.js (`@sparkjsdev/spark`)
 - **@pixiv/three-vrm** (v2.1.0): VRM character model support
 - **TensorFlow.js + Pose Detection**: Used for automated pose estimation during preprocessing
 - **JSZip**: For GVRM file format (zipped archive containing VRM + PLY + metadata)
@@ -292,7 +292,7 @@ The application includes WebRTC signaling UI (hidden by default):
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
   "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
-  "gaussian-splats-3d": "https://naruya.github.io/gs-edit/lib/gaussian-splats-3d.module.js",
+  "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.10/spark.module.js",
   "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm",
   "gvrm": "https://naruya.github.io/gs-edit/lib/gaussian-vrm.min.js"
 }
