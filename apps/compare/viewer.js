@@ -4,8 +4,16 @@ import { applyScenarioPose, ASSET_PATH, CAMERA_CONFIG, SCENARIO_NAMES } from './
 
 
 const mode = window.__COMPARE_MODE ?? 'unknown';
+const searchParams = new URL(window.location.href).searchParams;
+const gvrmLoadOptions = {
+  ...(window.__COMPARE_GVRM_OPTIONS ?? {}),
+  ...(searchParams.has('sparkSkinning')
+    ? { sparkSkinning: searchParams.get('sparkSkinning') !== '0' }
+    : {}),
+};
 const canvas = document.getElementById('canvas');
 const label = document.getElementById('scenario-label');
+const rendererLabel = document.getElementById('renderer-label');
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -108,9 +116,12 @@ function configureLocalSpark(gvrm) {
 }
 
 async function main() {
-  const gvrm = await GVRM.load(ASSET_PATH, scene, camera, renderer, 'sample1.gvrm');
+  const gvrm = await GVRM.load(ASSET_PATH, scene, camera, renderer, 'sample1.gvrm', gvrmLoadOptions);
   if (mode === 'local') {
     configureLocalSpark(gvrm);
+  }
+  if (rendererLabel && gvrm.sparkSkinning) {
+    rendererLabel.textContent = `${mode} + spark skinning`;
   }
 
   async function applyScenario(name = 'neutral', attempt = 0) {

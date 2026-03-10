@@ -176,14 +176,9 @@ export class GVRM extends THREE.Group {
     const character = await GVRM.initVRM(
       vrmUrl, scene, camera, renderer, modelScale, boneOperations);
 
-    let boneSceneMap = undefined;
-    let gsSource = plyUrl;
-    if (!useSparkSkinning) {
-      const { sceneSplatIndices, boneSceneMap: _boneSceneMap } = GVRM.sortSplatsByBones(extraData);
-      const parser = new PLYParser();
-      gsSource = await parser.splitPLY(plyUrl, sceneSplatIndices);
-      boneSceneMap = _boneSceneMap;
-    }
+    const { sceneSplatIndices, boneSceneMap } = GVRM.sortSplatsByBones(extraData);
+    const parser = new PLYParser();
+    const gsSource = await parser.splitPLY(plyUrl, sceneSplatIndices);
 
     const gs = await GVRM.initGS(
       gsSource,
@@ -220,14 +215,16 @@ export class GVRM extends THREE.Group {
     const scenePivots = {};
     const sceneFrameData = {};
 
+    skeleton.bones.forEach((bone) => {
+      bone.updateMatrixWorld(true);
+      bone.matrixWorld0 = bone.matrixWorld.clone();
+    });
+
     if (!useSparkSkinning) {
       gvrm.gs.viewer.updateMatrixWorld(true);
       viewerMatrixWorldInverse.copy(gvrm.gs.viewer.matrixWorld).invert();
 
       skeleton.bones.forEach((bone) => {
-        bone.updateMatrixWorld(true);
-        bone.matrixWorld0 = bone.matrixWorld.clone();
-
         bone.children.forEach((childBone) => {
           const childIndex = skeleton.bones.indexOf(childBone);
           const sceneIndex = boneSceneMap[childIndex];
@@ -270,11 +267,6 @@ export class GVRM extends THREE.Group {
 
       gvrm.gs.applyScenePivots(scenePivots);
       gvrm.sceneFrameData = sceneFrameData;
-    } else {
-      skeleton.bones.forEach((bone) => {
-        bone.updateMatrixWorld(true);
-        bone.matrixWorld0 = bone.matrixWorld.clone();
-      });
     }
 
     gvrm.updatePMC();

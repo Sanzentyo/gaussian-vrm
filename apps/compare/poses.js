@@ -7,7 +7,7 @@ export const CAMERA_CONFIG = {
   near: 0.01,
   far: 100,
   position: [0, 0.4, 1.5],
-  target: [0, 0.45, 0],
+  target: [0, 0.2, 0],
 };
 
 export const SCENARIOS = {

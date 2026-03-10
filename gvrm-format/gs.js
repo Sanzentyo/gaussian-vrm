@@ -16,9 +16,10 @@ const tempVertex = new THREE.Vector3();
 const tempRelativePos = new THREE.Vector3();
 const tempBonePos = new THREE.Vector3();
 const tempBoneQuat = new THREE.Quaternion();
-const tempRootQuat = new THREE.Quaternion();
-const tempRootQuatInverse = new THREE.Quaternion();
-const tempRootInverse = new THREE.Matrix4();
+const tempGSSceneQuat = new THREE.Quaternion();
+const tempGSSceneQuatInverse = new THREE.Quaternion();
+const tempGSSceneInverse = new THREE.Matrix4();
+const tempMeshMatrix = new THREE.Matrix4();
 const tempBoneIndices = new THREE.Vector4();
 const tempBoneWeights = new THREE.Vector4();
 
@@ -344,10 +345,6 @@ export class GaussianSplatting extends THREE.Group {
   }
 
   async applyCharacterSkinning(character, splatVertexIndices, splatRelativePoses) {
-    if (this.sceneEntries.length !== 1) {
-      throw new Error('Character skinning requires a single splat scene.');
-    }
-
     const skinnedMesh = character.currentVrm.scene.children[character.skinnedMeshIndex];
     const skeleton = skinnedMesh.skeleton;
     const positionAttribute = skinnedMesh.geometry.getAttribute('position');
@@ -357,80 +354,92 @@ export class GaussianSplatting extends THREE.Group {
     this.sourcePosition.copy(this.sceneTransform.position);
     this.sourceQuaternion.copy(this.sceneTransform.quaternion);
 
-    const skinning = new SplatSkinning({
-      mesh: this.sparkMesh,
-      numSplats: this.splatCount,
-      numBones: Math.min(256, skeleton.bones.length),
-    });
-
     character.currentVrm.scene.updateMatrixWorld(true);
-    tempRootInverse.copy(character.currentVrm.scene.matrixWorld).invert();
-    character.currentVrm.scene.getWorldQuaternion(tempRootQuat);
-    tempRootQuatInverse.copy(tempRootQuat).invert();
+    skinnedMesh.updateMatrixWorld(true);
+    tempMeshMatrix.copy(skinnedMesh.matrixWorld);
+    const skinningEntries = [];
 
-    for (let boneIndex = 0; boneIndex < skinning.numBones; boneIndex++) {
-      const bone = skeleton.bones[boneIndex];
-      bone.getWorldPosition(tempBonePos);
-      tempBonePos.applyMatrix4(tempRootInverse);
-      bone.getWorldQuaternion(tempBoneQuat);
-      tempBoneQuat.premultiply(tempRootQuatInverse);
-      skinning.setRestQuatPos(boneIndex, tempBoneQuat, tempBonePos);
-      skinning.setBoneQuatPos(boneIndex, tempBoneQuat, tempBonePos);
-    }
+    for (const entry of this.sceneEntries) {
+      const skinning = new SplatSkinning({
+        mesh: entry.sparkMesh,
+        numSplats: entry.sparkMesh.packedSplats.numSplats,
+        numBones: Math.min(256, skeleton.bones.length),
+      });
 
-    for (let i = 0; i < this.splatCount; i++) {
-      const vertexIndex = splatVertexIndices[i];
-      tempVertex.fromBufferAttribute(positionAttribute, vertexIndex);
+      entry.sceneTransform.position.copy(this.sourcePosition);
+      entry.sceneTransform.quaternion.copy(this.sourceQuaternion);
+      entry.sceneTransform.scale.setScalar(this.sourceScale);
+      entry.sceneTransform.updateMatrixWorld(true);
 
-      tempRelativePos.set(
-        splatRelativePoses[i * 3 + 0],
-        splatRelativePoses[i * 3 + 1],
-        splatRelativePoses[i * 3 + 2],
-      );
-      tempCenter.copy(tempVertex).add(tempRelativePos);
+      tempGSSceneInverse.copy(entry.sceneTransform.matrixWorld).invert();
+      entry.sceneTransform.getWorldQuaternion(tempGSSceneQuat);
+      tempGSSceneQuatInverse.copy(tempGSSceneQuat).invert();
 
-      tempBoneIndices.set(
-        skinIndexAttribute.getX(vertexIndex),
-        skinIndexAttribute.getY(vertexIndex),
-        skinIndexAttribute.getZ(vertexIndex),
-        skinIndexAttribute.getW(vertexIndex),
-      );
-      tempBoneWeights.set(
-        skinWeightAttribute.getX(vertexIndex),
-        skinWeightAttribute.getY(vertexIndex),
-        skinWeightAttribute.getZ(vertexIndex),
-        skinWeightAttribute.getW(vertexIndex),
-      );
-
-      const totalWeight = tempBoneWeights.x + tempBoneWeights.y + tempBoneWeights.z + tempBoneWeights.w;
-      if (totalWeight <= 0.0) {
-        tempBoneIndices.set(0, 0, 0, 0);
-        tempBoneWeights.set(1, 0, 0, 0);
+      for (let boneIndex = 0; boneIndex < skinning.numBones; boneIndex++) {
+        const bone = skeleton.bones[boneIndex];
+        bone.getWorldPosition(tempBonePos);
+        tempBonePos.applyMatrix4(tempGSSceneInverse);
+        bone.getWorldQuaternion(tempBoneQuat);
+        tempBoneQuat.premultiply(tempGSSceneQuatInverse);
+        skinning.setRestQuatPos(boneIndex, tempBoneQuat, tempBonePos);
+        skinning.setBoneQuatPos(boneIndex, tempBoneQuat, tempBonePos);
       }
 
-      skinning.setSplatBones(i, tempBoneIndices, tempBoneWeights);
+      const count = entry.sparkMesh.packedSplats.numSplats;
+      for (let localIndex = 0; localIndex < count; localIndex++) {
+        const globalIndex = entry.startIndex + localIndex;
+        const vertexIndex = splatVertexIndices[globalIndex];
+        tempVertex.fromBufferAttribute(positionAttribute, vertexIndex);
 
-      const splat = this.sparkMesh.packedSplats.getSplat(i);
-      this.sparkMesh.packedSplats.setSplat(
-        i,
-        tempCenter,
-        splat.scales,
-        splat.quaternion,
-        splat.opacity,
-        splat.color,
-      );
+        tempRelativePos.set(
+          splatRelativePoses[globalIndex * 3 + 0],
+          splatRelativePoses[globalIndex * 3 + 1],
+          splatRelativePoses[globalIndex * 3 + 2],
+        );
+        tempCenter.copy(tempVertex).add(tempRelativePos);
+        tempCenter.applyMatrix4(tempMeshMatrix);
+        tempCenter.applyMatrix4(tempGSSceneInverse);
+
+        tempBoneIndices.set(
+          skinIndexAttribute.getX(vertexIndex),
+          skinIndexAttribute.getY(vertexIndex),
+          skinIndexAttribute.getZ(vertexIndex),
+          skinIndexAttribute.getW(vertexIndex),
+        );
+        tempBoneWeights.set(
+          skinWeightAttribute.getX(vertexIndex),
+          skinWeightAttribute.getY(vertexIndex),
+          skinWeightAttribute.getZ(vertexIndex),
+          skinWeightAttribute.getW(vertexIndex),
+        );
+
+        const totalWeight = tempBoneWeights.x + tempBoneWeights.y + tempBoneWeights.z + tempBoneWeights.w;
+        if (totalWeight <= 0.0) {
+          tempBoneIndices.set(0, 0, 0, 0);
+          tempBoneWeights.set(1, 0, 0, 0);
+        }
+
+        skinning.setSplatBones(localIndex, tempBoneIndices, tempBoneWeights);
+
+        const splat = entry.sparkMesh.packedSplats.getSplat(localIndex);
+        entry.sparkMesh.packedSplats.setSplat(
+          localIndex,
+          tempCenter,
+          splat.scales,
+          splat.quaternion,
+          splat.opacity,
+          splat.color,
+        );
+      }
+
+      entry.sparkMesh.skinning = skinning;
+      entry.sparkMesh.updateGenerator();
+      entry.sparkMesh.needsUpdate = true;
+      entry.sparkMesh.packedSplats.needsUpdate = true;
+      skinningEntries.push({ skinning, sceneTransform: entry.sceneTransform });
     }
 
-    this.sceneTransform.position.copy(this.sourcePosition);
-    this.sceneTransform.quaternion.copy(this.sourceQuaternion);
-    this.sceneTransform.scale.copy(character.currentVrm.scene.scale);
-    this.sceneTransform.updateMatrixWorld(true);
-
-    this.sparkMesh.skinning = skinning;
-    this.sparkMesh.updateGenerator();
-    this.sparkMesh.needsUpdate = true;
-    this.sparkMesh.packedSplats.needsUpdate = true;
-    this.skinning = skinning;
+    this.skinning = skinningEntries;
     this.rebuildBaseDataCaches();
   }
 
@@ -441,21 +450,24 @@ export class GaussianSplatting extends THREE.Group {
     const skeleton = skinnedMesh.skeleton;
 
     character.currentVrm.scene.updateMatrixWorld(true);
-    tempRootInverse.copy(character.currentVrm.scene.matrixWorld).invert();
-    character.currentVrm.scene.getWorldQuaternion(tempRootQuat);
-    tempRootQuatInverse.copy(tempRootQuat).invert();
+    for (const { skinning, sceneTransform } of this.skinning) {
+      sceneTransform.updateMatrixWorld(true);
+      tempGSSceneInverse.copy(sceneTransform.matrixWorld).invert();
+      sceneTransform.getWorldQuaternion(tempGSSceneQuat);
+      tempGSSceneQuatInverse.copy(tempGSSceneQuat).invert();
 
-    const boneCount = Math.min(this.skinning.numBones, skeleton.bones.length);
-    for (let boneIndex = 0; boneIndex < boneCount; boneIndex++) {
-      const bone = skeleton.bones[boneIndex];
-      bone.getWorldPosition(tempBonePos);
-      tempBonePos.applyMatrix4(tempRootInverse);
-      bone.getWorldQuaternion(tempBoneQuat);
-      tempBoneQuat.premultiply(tempRootQuatInverse);
-      this.skinning.setBoneQuatPos(boneIndex, tempBoneQuat, tempBonePos);
+      const boneCount = Math.min(skinning.numBones, skeleton.bones.length);
+      for (let boneIndex = 0; boneIndex < boneCount; boneIndex++) {
+        const bone = skeleton.bones[boneIndex];
+        bone.getWorldPosition(tempBonePos);
+        tempBonePos.applyMatrix4(tempGSSceneInverse);
+        bone.getWorldQuaternion(tempBoneQuat);
+        tempBoneQuat.premultiply(tempGSSceneQuatInverse);
+        skinning.setBoneQuatPos(boneIndex, tempBoneQuat, tempBonePos);
+      }
+
+      skinning.updateBones();
     }
-
-    this.skinning.updateBones();
   }
 
   loadGS(urls, scale, gsPosition = [0, 0, 0], quaternion = [0, 0, 1, 0], scene, renderer, options = {}) {

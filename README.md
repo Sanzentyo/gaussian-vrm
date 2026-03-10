@@ -104,6 +104,7 @@ const gvrm = await GVRM.load('./assets/author.gvrm', scene, camera, renderer, {
 ```
 
 This path keeps using Spark, but switches GVRM loading from the split-scene rigid transform mode to Spark's per-splat skinning path.
+The split scenes are still kept for sorting, but the splats inside each scene are deformed by Spark skinning instead of only following rigid scene transforms.
 
 
 ## Advanced Examples
